@@ -16,13 +16,13 @@
 #include <MessageTypes.h>
 
 #include <settings.h>
+#include "encryption.h"
 
-//#define DEBUG
+#define DEBUG
 
 #define SKETCH_VERSION "0.1"
 
 #define BAUD_RATE 9600L
-#define ENCRYPTION_KEY "sampleEncryptKey"
 
 #define F_CPU_STABLE 4000000L
 
@@ -41,8 +41,8 @@ uint32_t loopCounter = 0;
 const uint8_t vccBufferMax = 5;
 
 int16_t vccBuffer[vccBufferMax];
-SimpleBuffer<int16_t>vccSimpleBuffer = SimpleBuffer<int16_t>(vccBuffer, vccBufferMax);
-MovingAverage<int16_t> vccAverage = MovingAverage<int16_t>(&vccSimpleBuffer);
+SimpleRingBuffer<int16_t>vccSimpleRingBuffer = SimpleRingBuffer<int16_t>(vccBuffer, vccBufferMax);
+MovingAverage<int16_t> vccAverage = MovingAverage<int16_t>(&vccSimpleRingBuffer);
 
 MessageItem vccMessageItem;
 
@@ -63,8 +63,8 @@ uint32_t freeMemoryLast = 0;
 const uint8_t temperatureBufferMax = 5;
 
 int16_t temperatureBuffer[temperatureBufferMax];
-SimpleBuffer<int16_t>temperatureSimpleBuffer = SimpleBuffer<int16_t>(temperatureBuffer, temperatureBufferMax);
-MovingAverage<int16_t> temperatureAverage = MovingAverage<int16_t>(&temperatureSimpleBuffer);
+SimpleRingBuffer<int16_t>temperatureSimpleRingBuffer = SimpleRingBuffer<int16_t>(temperatureBuffer, temperatureBufferMax);
+MovingAverage<int16_t> temperatureAverage = MovingAverage<int16_t>(&temperatureSimpleRingBuffer);
 
 MessageItem temperatureMessageItem;
 
@@ -73,8 +73,8 @@ MessageItem temperatureMessageItem;
 const uint8_t humidityBufferMax = 5;
 
 uint16_t humidityBuffer[humidityBufferMax];
-SimpleBuffer<uint16_t>humiditySimpleBuffer = SimpleBuffer<uint16_t>(humidityBuffer, humidityBufferMax);
-MovingAverage<uint16_t> humidityAverage = MovingAverage<uint16_t>(&humiditySimpleBuffer);
+SimpleRingBuffer<uint16_t>humiditySimpleRingBuffer = SimpleRingBuffer<uint16_t>(humidityBuffer, humidityBufferMax);
+MovingAverage<uint16_t> humidityAverage = MovingAverage<uint16_t>(&humiditySimpleRingBuffer);
 
 MessageItem humidityMessageItem;
 
@@ -82,8 +82,8 @@ MessageItem humidityMessageItem;
 const uint8_t pressureBufferMax = 5;
 
 uint16_t pressureBuffer[pressureBufferMax];
-SimpleBuffer<uint16_t>pressureSimpleBuffer = SimpleBuffer<uint16_t>(pressureBuffer, pressureBufferMax);
-MovingAverage<uint16_t> pressureAverage = MovingAverage<uint16_t>(&pressureSimpleBuffer);
+SimpleRingBuffer<uint16_t>pressureSimpleRingBuffer = SimpleRingBuffer<uint16_t>(pressureBuffer, pressureBufferMax);
+MovingAverage<uint16_t> pressureAverage = MovingAverage<uint16_t>(&pressureSimpleRingBuffer);
 
 MessageItem pressureMessageItem;
 
