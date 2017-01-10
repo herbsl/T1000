@@ -15,12 +15,12 @@
 #include <MessageItem.h>
 #include <MessageTypes.h>
 
-#include <settings.h>
+#include "settings.h"
 #include "encryption.h"
 
-#define DEBUG
+//#define DEBUG
 
-#define SKETCH_VERSION "0.1"
+#define SKETCH_VERSION "0.1a"
 
 #define BAUD_RATE 9600L
 
@@ -33,7 +33,7 @@ Vcc vcc(0.98);
 settings_V1 settings;
 
 clock_div_t clockDivStable;
-clock_div_t clockDivLast = clock_prescale_get();
+clock_div_t clockDivLast;
 
 uint32_t loopCounter = 0;
 
@@ -220,7 +220,7 @@ void loop() {
     vccAverage.push_back(vcc.Read_Volts() * 100);
     uint32_t _vccAverage = vccAverage.simple();
 
-    if (_vccAverage <= 1245) {
+    if (_vccAverage <= 245) {
         clockDiv = clockDivStable;
     }
     else {
