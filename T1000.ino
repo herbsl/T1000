@@ -9,6 +9,8 @@
 #include <SparkFunBME280.h>
 
 #include <SystemClock.h>
+#include <SleepMode.h>
+
 #include <MovingAverage.h>
 
 #include <MessageStore.h>
@@ -18,12 +20,10 @@
 #include "settings.h"
 #include "encryption.h"
 
+
 //#define DEBUG
-
-#define SKETCH_VERSION "0.1a"
-
+#define SKETCH_VERSION "0.1b"
 #define BAUD_RATE 9600L
-
 #define F_CPU_STABLE 4000000L
 
 
@@ -108,9 +108,10 @@ void setupRFM69() {
 #ifdef DEBUG
         Serial.println("failed, please check wiring!");
 #endif
-        delay(SystemClock.adjustDelay(5000));
+
+        delay(SystemClock.adjustDelay(5000));        
         while (true) {
-            powerDown(-1);
+            SleepMode.powerDown(-1);
         }
     }
 
@@ -138,22 +139,31 @@ void setupBME280() {
     bme280.settings.tempOverSample = 1;
     bme280.settings.humidOverSample = 1;
     bme280.settings.pressOverSample = 0;
-
+        
     if (bme280.begin() != 0x60) {
 #ifdef DEBUG
-      Serial.println("failed, please check wiring!");
+        Serial.println("failed, please check wiring!");
 #endif
 
-      delay(SystemClock.adjustDelay(5000));
-      
-      while (true) {
-        powerDown(-1);
-      }
+        delay(SystemClock.adjustDelay(5000));     
+        while (true) {
+            SleepMode.powerDown(-1);
+        }
     }
 
 #ifdef DEBUG
     Serial.println("done");
 #endif    
+}
+
+
+void beforePowerDown() {
+#ifdef DEBUG
+    Serial.println("PowerDown");
+    Serial.flush();
+#endif    
+
+    radio.sleep();
 }
 
 void loopBME280() {
@@ -162,7 +172,7 @@ void loopBME280() {
     
     measureTime = bme280.measure();  
     minMeasureTime = max(15, (int8_t)measureTime + 1);
-    powerDown(minMeasureTime);
+    SleepMode.powerDown(minMeasureTime);
     
     bme280.bulkRead();
 
@@ -197,11 +207,15 @@ void setup() {
 #ifdef DEBUG
     Serial.begin(SystemClock.adjustBaudRate(BAUD_RATE));
 #endif
-      
+
+
+     
     uint8_t clock_divisor = (uint8_t)(F_CPU * SystemClock.getFusesFactor() / F_CPU_STABLE);
     clockDivStable = (clock_div_t)(log(clock_divisor) / log(2));
 
     EEPROM.get(0x01, settings);
+
+    SleepMode.before(beforePowerDown);
 
     setupRFM69();
     setupBME280();
@@ -214,12 +228,14 @@ void setup() {
 }
 
 void loop() {
+
+    
     clock_div_t clockDiv;
     uint32_t start = micros();
-      
+    
     vccAverage.push_back(vcc.Read_Volts() * 100);
     uint32_t _vccAverage = vccAverage.simple();
-
+    
     if (_vccAverage <= 245) {
         clockDiv = clockDivStable;
     }
@@ -290,72 +306,6 @@ void loop() {
 #ifdef DEBUG
     Serial.println("Runtime: " + String(SystemClock.adjustTime(micros() - start)));
 #endif
-    
-    powerDown(5000);
-}
 
-void powerDown(int ms) {
-    period_t sleep;
-
-    radio.sleep();
-    
-#ifdef DEBUG
-    Serial.flush();
-#endif
-
-    while (true) {
-        if (ms >= 8000) {
-            sleep = SLEEP_8S;
-            ms -= 8000;
-        }
-        else if (ms >= 4000) {
-            sleep = SLEEP_4S;
-            ms -= 4000;
-        }
-        else if (ms >= 2000) {
-            sleep = SLEEP_2S;
-            ms -= 2000;
-        }
-        else if (ms >= 1000) {
-            sleep = SLEEP_1S;
-            ms -= 1000;
-        }
-        else if (ms >= 500) {
-            sleep = SLEEP_500MS;
-            ms -= 500;
-        }
-        else if (ms >= 250) {
-            sleep = SLEEP_250MS;
-            ms -= 250;
-        }
-        else if (ms >= 120) {
-            sleep = SLEEP_120MS;
-            ms -= 120;
-        }
-        else if (ms >= 60) {
-            sleep = SLEEP_60MS;
-            ms -= 60;
-        }
-        else if (ms >= 30) {
-            sleep = SLEEP_30MS;
-            ms -= 30;
-        }
-        else if (ms >= 15) {
-            sleep = SLEEP_15MS;
-            ms -= 15;
-        }
-        else if (ms == 0) {
-            return;
-        }
-        else if (ms == -1) {
-            sleep = SLEEP_FOREVER;
-            ms = 0;
-        }
-        else {
-            sleep = SLEEP_15MS;
-            ms = 0;
-        }
-
-        LowPower.powerDown(sleep, ADC_OFF, BOD_OFF);
-    }
+    SleepMode.powerDown(5000);
 }
