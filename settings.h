@@ -8,6 +8,8 @@ struct settings_V1 {
     uint8_t radioFrequency;
     uint8_t radioPowerLevel;
     bool    radioIsHighPower;
+    bool    bme280Pressure;
+    int16_t wakeupsPerHour;
 };
 
 #endif
