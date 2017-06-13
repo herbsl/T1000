@@ -20,14 +20,15 @@
 #include "settings.h"
 #include "encryption.h"
 
-#define SKETCH_VERSION "0.1e" // max. 4 Bytes !!!
+#define SKETCH_VERSION "0.5a" // max. 4 Bytes !!!
 #define BAUD_RATE 9600L
 #define F_CPU_STABLE 4000000L
 
 char cmd[25];
-int cmdPos=0;
+int cmdPos = 0;
 
-bool debug=false;
+bool debug = false;
+bool onBattery = true;
 
 BME280 bme280;
 RFM69 radio;
@@ -35,9 +36,9 @@ Vcc vcc(0.99);
 settings_V1 settings;
 
 clock_div_t clockDivStable;
-clock_div_t clockDivLast;
+clock_div_t clockDivCurrent;
 
-uint32_t loopCounter = 0;
+uint16_t loopCounter = 0;
 
 // VCC
 const uint8_t vccBufferMax = 5;
@@ -46,29 +47,23 @@ int16_t vccBuffer[vccBufferMax];
 SimpleRingBuffer<int16_t>vccSimpleRingBuffer = SimpleRingBuffer<int16_t>(vccBuffer, vccBufferMax);
 MovingAverage<int16_t> vccAverage = MovingAverage<int16_t>(&vccSimpleRingBuffer);
 
-MessageItem vccMessageItem;
-
-int16_t vccLast = 0;
+MessageItem vccMessageItem(50);
 
 
 // Sketch-Version
-MessageItem versionMessageItem;
+MessageItem versionMessageItem(true);
 
 // CPU & Memory
-MessageItem cpuMessageItem;
-MessageItem freeMemoryMessageItem;
-
-uint32_t freeMemoryLast = 0;
-
+MessageItem cpuMessageItem(1);
+MessageItem freeMemoryMessageItem(1);
 
 // Temperature
 const uint8_t temperatureBufferMax = 5;
 
 int16_t temperatureBuffer[temperatureBufferMax];
 SimpleRingBuffer<int16_t>temperatureSimpleRingBuffer = SimpleRingBuffer<int16_t>(temperatureBuffer, temperatureBufferMax);
-MovingAverage<int16_t> temperatureAverage = MovingAverage<int16_t>(&temperatureSimpleRingBuffer);
 
-MessageItem temperatureMessageItem;
+MessageItem temperatureMessageItem(15);
 
 
 // Humidity
@@ -76,18 +71,16 @@ const uint8_t humidityBufferMax = 5;
 
 uint16_t humidityBuffer[humidityBufferMax];
 SimpleRingBuffer<uint16_t>humiditySimpleRingBuffer = SimpleRingBuffer<uint16_t>(humidityBuffer, humidityBufferMax);
-MovingAverage<uint16_t> humidityAverage = MovingAverage<uint16_t>(&humiditySimpleRingBuffer);
 
-MessageItem humidityMessageItem;
+MessageItem humidityMessageItem(25);
 
 // Pressure
 const uint8_t pressureBufferMax = 5;
 
 uint16_t pressureBuffer[pressureBufferMax];
 SimpleRingBuffer<uint16_t>pressureSimpleRingBuffer = SimpleRingBuffer<uint16_t>(pressureBuffer, pressureBufferMax);
-MovingAverage<uint16_t> pressureAverage = MovingAverage<uint16_t>(&pressureSimpleRingBuffer);
 
-MessageItem pressureMessageItem;
+MessageItem pressureMessageItem(5);
 
 // Message Store
 const uint8_t msgBufferMax = 12;
@@ -101,13 +94,16 @@ MessageStore msgStore = MessageStore(&msgHashMap);
 
 void printHelp() {
     Serial.println(F("nodeid\t\t0-255\tGet/set node id"));
-    Serial.println(F("gatewayid\t0-255\tGet/set gateway id")); 
     Serial.println(F("networkid\t0-255\tGet/set network id")); 
+    Serial.println(F("gatewayid\t1-255\tGet/set gateway id"));  
+    Serial.println(F("frequency\tfreq\tGet/set frequency, 31(3)|43(3)|86(8)|91(3)"));   
     Serial.println(F("powerlevel\t0-31\tGet/set powerlevel"));     
     Serial.println(F("highpower\t0|1\tGet/set highpower mode"));
     Serial.println(F("pressure\t0|1\tMeasure pressure"));
     Serial.println(F("wakeups\t\t1-720\tWakeups per hour"));
     Serial.println(F("save\t\t\tSave settings to EEPROM"));
+    Serial.println(F("mem\t\t\tPrint free memory"));
+    Serial.println(F("cpu\t\t\tPrint cpu speed"));    
     Serial.println(F("debug\t\t\tToggle debug mode"));    
 }
 
@@ -160,7 +156,7 @@ bool executeCommand() {
         Serial.print(F("Networkid: "));
         Serial.println(String(settings.networkid));
     }
-    else if (strcmp(cmd, "gatewayid") == 0) {
+    else if (strncmp(cmd, "gatewayid", 9) == 0) {
         uint8_t gatewayid;
         if (sscanf(cmd, "%*s %hhu", &gatewayid) == 1 && gatewayid >= 1 && gatewayid <= 255) {
             settings.gatewayid = gatewayid;
@@ -170,9 +166,15 @@ bool executeCommand() {
         Serial.print(F("Gatewayid: "));
         Serial.println(String(settings.gatewayid));
     }
-    else if (strcmp(cmd, "freqency") == 0) {
+    else if (strncmp(cmd, "frequency", 9) == 0) {
+        uint8_t frequency;
+        if (sscanf(cmd, "%*s %hhu", &frequency) == 1 && (frequency == 31 || frequency == 43 || frequency == 86 || frequency == 91)) {
+            settings.radioFrequency = frequency;
+            setupRFM69();
+        }
+        
         Serial.print(F("Frequency: "));
-        Serial.println(String(settings.radioFrequency));
+        Serial.println(settings.radioFrequency);
     }   
     else if (strncmp(cmd, "powerlevel", 10) == 0) {
         uint8_t powerlevel;
@@ -206,7 +208,7 @@ bool executeCommand() {
         }
         
         Serial.print(F("Pressure: "));
-        Serial.println(String(settings.bme280Pressure));
+        Serial.println(settings.bme280Pressure);
     }
     else if (strncmp(cmd, "wakeups", 7) == 0) {
         uint16_t wakeups;
@@ -226,8 +228,41 @@ bool executeCommand() {
         Serial.print(F("Debug mode: "));
         Serial.println(String(debug));    
     }
+    else if (strcmp(cmd, "mem") == 0) {    
+        Serial.print(F("Free memory: "));
+        Serial.print(freeMemory());
+        Serial.println(F(" Bytes"));    
+    }
+    else if (strcmp(cmd, "cpu") == 0) {    
+        Serial.print(F("CPU speed:\t\t"));
+        Serial.print(F_CPU / 1000.);
+        Serial.println(F(" KHz"));
+        
+        Serial.print(F("Current Divisor:\t"));
+        Serial.println(SystemClock.getAdjustFactor());
+        
+        Serial.print(F("Current CPU speed:\t"));
+        Serial.print(F_CPU * SystemClock.getAdjustFactor() / 1000);
+        Serial.println(F(" KHz"));    
+    }    
+    else {
+        Serial.print(F("Command unknown: "));
+        Serial.println(String(cmd));
+    }
 
     return true;
+}
+
+bool forceEverySeconds(int16_t seconds) {
+    int16_t sleepTimeSec;
+    
+    sleepTimeSec = 3600 / settings.wakeupsPerHour;
+    seconds = seconds / sleepTimeSec * sleepTimeSec;
+    if ((sleepTimeSec * (loopCounter + 1)) % seconds == 0) {
+        return true;
+    }
+
+    return false;
 }
 
 void setupRFM69() {
@@ -293,28 +328,34 @@ void measureBME280() {
 
     // Temperature
     temperature = bme280.readTempC();
-    temperatureAverage.push_back(temperature * 100);
 
     temperatureMessageItem.priority = 1;
-    temperatureMessageItem.set((int32_t)(temperature * 100));
-    msgStore.set(message_id_temperature, &temperatureMessageItem);
+
+
+    if (temperatureMessageItem.set((int32_t)(temperature * 100), forceEverySeconds(300))) {
+        msgStore.set(message_id_temperature, &temperatureMessageItem);
+    }
+    else {
+        Serial.println((int32_t)(temperature * 100));
+    }
 
     // Humidity
     humidity = bme280.readFloatHumidity();
-    humidityAverage.push_back(humidity * 100);
 
     humidityMessageItem.priority = 1;
-    humidityMessageItem.set((uint32_t)(humidity * 100));
-    msgStore.set(message_id_humidity, &humidityMessageItem);
+    if (humidityMessageItem.set((uint32_t)(humidity * 100), forceEverySeconds(300))) {
+        msgStore.set(message_id_humidity, &humidityMessageItem);
+    }
 
     // Pressure
     if (bme280.settings.pressOverSample > 0) {
         pressure = bme280.readFloatPressure();
-        pressureAverage.push_back(pressure * 100);
-    
-        pressureMessageItem.priority = 1;
-        pressureMessageItem.set(pressure * 100);
-        msgStore.set(message_id_pressure, &pressureMessageItem);
+        
+        pressureMessageItem.priority = 1;    
+        if (pressureMessageItem.set(pressure, forceEverySeconds(300))) {
+            msgStore.set(message_id_pressure, &pressureMessageItem);
+        }
+
     }
 }
 
@@ -332,6 +373,7 @@ void setup() {
      
     uint8_t clock_divisor = (uint8_t)(F_CPU * SystemClock.getFusesFactor() / F_CPU_STABLE);
     clockDivStable = (clock_div_t)(log(clock_divisor) / log(2));
+    clockDivCurrent = (clock_div_t)(log(SystemClock.getFusesFactor()) / log(2));
 
     setupRFM69();
     setupBME280();  
@@ -341,56 +383,74 @@ void setup() {
 
 
 void loop() {  
-    clock_div_t clockDiv = clockDivLast;
-    uint32_t _freeMemory, _vccAverage = vccLast;
-    int32_t sleepTime = 3600 / (uint32_t)settings.wakeupsPerHour * 1000;
     unsigned long start = millis();
+    clock_div_t clockDiv = clockDivCurrent;
     
+    int32_t sleepTime = 3600 / (uint32_t)settings.wakeupsPerHour * 1000;
+       
     if (loopCounter % 10 == 0) {
         // Stabilize ADC before measuring VCC:
         SleepMode.powerDown(15, ADC_ON);
 
         vccAverage.push_back(vcc.Read_Volts() * 100);
-        _vccAverage = vccAverage.simple();
-
-        if (loopCounter % 100 == 0 || vccLast != _vccAverage) {
-            vccMessageItem.set(_vccAverage);
-            vccMessageItem.priority = 2;
-            
+        uint32_t _vccAverage = vccAverage.simple();
+        
+        vccMessageItem.priority = 2;
+        if (vccMessageItem.set(_vccAverage, forceEverySeconds(1800))) {
             msgStore.set(message_id_vcc, &vccMessageItem);
-            vccLast = _vccAverage;
+        }
+
+        // Adjust clock divisor below 2.45 volts:
+        if (_vccAverage <= 245) {
+            clockDiv = clockDivStable;
+        }
+        else {
+            clockDiv = clock_div_1;
+        }
+
+        // Detect battery state
+        if (_vccAverage <= 340) {
+            onBattery = true;
+        }
+        else {
+            onBattery = false;
+        }
+        
+        cpuMessageItem.priority = 3;
+        uint32_t cpuSpeed = (uint32_t)(F_CPU * SystemClock.getAdjustFactor() / 1000);
+        if (cpuMessageItem.set(cpuSpeed, forceEverySeconds(3600))) {              
+            msgStore.set(message_id_cpu_speed, &cpuMessageItem);
+        }
+
+        if (clockDiv != clockDivCurrent) {
+            Serial.end();
+    
+            SystemClock.setDivisor(clockDiv);
+            clockDivCurrent = clockDiv;
+    
+            Serial.begin(SystemClock.adjustBaudRate(BAUD_RATE));
+            return;
         }
     }
 
-    if (loopCounter % 100 == 0) {
-        versionMessageItem.set(SKETCH_VERSION);
-        versionMessageItem.priority = 3;
+    measureBME280();
+
+    versionMessageItem.priority = 3;
+    if (versionMessageItem.set(SKETCH_VERSION, forceEverySeconds(7200))) {
         msgStore.set(message_id_version, &versionMessageItem);
     }
 
-    if (loopCounter % 10 == 0 || clockDivLast != clockDiv) {
-        cpuMessageItem.set((uint32_t)(F_CPU * SystemClock.getAdjustFactor() / 1000));
-        cpuMessageItem.priority = 3;
-        
-        msgStore.set(message_id_cpu_speed, &cpuMessageItem);
-    }
-
-    _freeMemory = freeMemory();
-    if (loopCounter % 10 == 0 || _freeMemory != freeMemoryLast) {
-        freeMemoryMessageItem.set(_freeMemory);
-        freeMemoryMessageItem.priority = 2;
-        
+    freeMemoryMessageItem.priority = 2;
+    if (freeMemoryMessageItem.set((uint32_t)freeMemory(), forceEverySeconds(1800))) {
         msgStore.set(message_id_memory_free, &freeMemoryMessageItem);
-        freeMemoryLast = _freeMemory;
     }
-
-    measureBME280();
     
     char   *msgData = msgStore.encode();
     uint8_t msgSize = msgStore.size();    
 
     if (msgSize > 0) {
         radio.send(settings.gatewayid, msgData, msgSize);
+        
         if (debug) {
             Serial.print(F("Message-Length: "));
             Serial.println(String(msgSize));
@@ -403,41 +463,34 @@ void loop() {
             Serial.println();
         }
     }
+    else if (debug) {
+        Serial.println(F("No data to send"));
+    }
 
-    sleepTime -= (millis() - start);
-
-    if (vccLast >= 340) {
-  
-        // Provide a simple settings cmdline ...:
-        while (sleepTime > 0) {
+    if (onBattery) {
+        // We are on Battery, goto sleep until next tick ...:
+        SleepMode.powerDown(sleepTime - millis() - start);
+    }
+    else {    
+        // Provide a simple cmdline ...:
+        while (true) {
+            int16_t runtime = SystemClock.adjustTime(millis() - start);
+            uint16_t cmdSleepSteps = 100;
+                
+            if (runtime >= sleepTime) {
+                break;
+            }
+            
             if (executeCommand()) {
                 printPrompt();
             }
 
-            sleepTime -= 100;
-            delay(SystemClock.adjustDelay(100));
+            if (sleepTime - runtime < cmdSleepSteps) {
+                cmdSleepSteps = sleepTime - runtime;
+            }
+
+            delay(SystemClock.adjustDelay(cmdSleepSteps));
         }
-    }
-    else {
-        // We are on Battery, goto sleep until next tick ...:
-        SleepMode.powerDown(sleepTime);
-    }
-    
-    // Adjust clock Divisor below 2.45 Volts (TODO: too late for CPU-Readings ...):
-    if (_vccAverage <= 245) {
-        clockDiv = clockDivStable;
-    }
-    else {
-        clockDiv = clock_div_1;
-    }
-
-    if (clockDivLast != clockDiv) {
-        Serial.end();
-
-        SystemClock.setDivisor(clockDiv);
-        clockDivLast = clockDiv;
-
-        Serial.begin(SystemClock.adjustBaudRate(BAUD_RATE));
     }
       
     loopCounter++;
